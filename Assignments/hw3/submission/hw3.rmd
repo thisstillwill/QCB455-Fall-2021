@@ -1,0 +1,351 @@
+---
+title: "QCB455/COS551 Homework 3"
+subtitle: "Motif Finding, BLAST, ChIP-seq, Clustering, and GO Term Enrichment"
+author: "William Svoboda (`wsvoboda`)"
+date: "Last edited `r format(Sys.time(), '%B %d, %Y')`"
+toc: true
+fontfamily: charter
+output: 
+    pdf_document:
+        number_sections: true
+urlcolor: blue
+linkcolor: blue
+header-includes: |
+            \usepackage{amsmath}
+---
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Required packages
+library(dplyr, quietly = TRUE)
+library(knitr, quietly = TRUE)
+library(formatR, quietly = TRUE)
+
+library(BiocManager, quietly = TRUE)
+library(Biostrings, quietly = TRUE)
+
+# Wrap R code in final document
+opts_chunk$set(tidy.opts=list(width.cutoff = 80 ), tidy = TRUE)
+```
+
+# Collaboration Statement {-}
+
+I talked with Brendan McManamon (`bm18`, student), Debby Park (`debbyp`, student), and Sara Schwartz (`sarats`, student) about this homework.
+
+\newpage
+
+# Motif Finding
+
+## Theoretical Model
+
+1. Build a position frequency matrix to model this transcription factor, using a pseudocount of 0.25.
+
+```{r}
+# Given sequences
+seq_data <- Biostrings::BStringSet(c("ATGT", "ACGT", "ACCT", "ATCT"))
+
+# Count number of times each nucleotide appears in each column of aligned binding sites
+counts <- Biostrings::consensusMatrix(seq_data) %>% `colnames<-` (1:4)
+
+# Correct for zero frequency case
+pseudocount_weight <- 0.25
+pseudocounts <- counts + pseudocount_weight
+
+# Normalize each column to sum to 1 (probabilities)
+pfm <- apply(pseudocounts,2, norm <- function(x) {return(x / sum(x))})
+
+# Print position frequency table
+knitr::kable(pfm, caption = "Position frequency matrix")
+```
+
+2. Suppose that the genome this transcription factor is found in has a nucleotide composition of A 40%, C 10%, G 10% and T 40%. Give log-odds scores for searching for binding sites for this transcription factor within the sequence TATGT.
+
+```{r}
+# Use given nucleotide composition to find odds
+nuc_comps <- c(0.4, 0.1, 0.1, 0.4)
+odds <- t(sapply(1:nrow(pfm), function(i) pfm[i,] / nuc_comps[i])) %>% `rownames<-` (c("A", "C", "G", "T"))
+
+# Find position weight matrix
+pwm <-  t(sapply(1:nrow(odds), function(i) log2(odds[i,]))) %>% `rownames<-` (c("A", "C", "G", "T"))
+
+# Represent each possible window of length 4 for the sequence 'TATGT' and its reverse complement 'ACATA'
+seq_windows <- c("TATG", "ATGT", "ACAT", "CATA")
+seq_windows_df <- read.fwf(file = textConnection(seq_windows), widths = c(1,1,1,1), colClasses = "character")
+
+# Search and calculate log-odds scores
+for (i in 1:length(seq_windows)) {
+  score <- 0
+  for (j in 1:nchar(seq_windows[i])) {
+    row_index <- which(rownames(pwm) == substr(seq_windows[i], j, j))
+    score <- score + pwm[row_index,j]
+  }
+  seq_windows_df$Score[i] <- score
+}
+
+# Print log-odds scores
+knitr::kable(cbind(seq_windows, seq_windows_df$Score) %>% `colnames<-` (c("window", "score")), caption = "Log-odds scores")
+```
+
+## Uncovering Regulators
+
+### MEME
+
+1. Selected 'Classic mode' (provide one set of sequences and MEME discovers motifs enriched in the set)
+2. Selected 'DNA, RNA or Protein' for sequence alphabet
+3. Uploaded the file **DNA-seqs.txt** for primary sequences
+4. Selected 'One Occurrence Per Sequence' for site distribution
+5. Selected 1 as the number of motifs to find
+6. Clicked 'Submit/Download' to send the discovered motif to Tomtom
+
+- **Figure \ref{fig:locations} shows the motif locations discovered by MEME.**
+
+```{r, label="locations",out.width="\\linewidth", include=TRUE, fig.align="center", fig.cap=c("Motif locations"), echo=FALSE}
+knitr::include_graphics("./hw3data/q1/motif_locations.pdf")
+```
+
+### Tomtom
+
+1. Kept the input query motifs on 'Submitted motifs' (from MEME)
+2. Selected 'ECOLI (Escherichia coli) DNA' and 'Swiss Regulon' for the motif database
+3. Kept 'Search with one motif' selected
+
+- **Table \ref{tab:results} shows the results given by Tomtom. The putative regulator is most likely CRP 25-83.**
+
+```{r, label = "results", echo=FALSE}
+matches <- read.csv(file = "./hw3data/q1/tomtom.tsv", sep = "\t", header = TRUE)
+knitr::kable(matches[1:16, c(2, 4:7, 9)], caption = "Tomtom results", format = "latex", booktabs = T)
+```
+
+\newpage
+
+# BLAST
+
+## Multiple testing in BLAST
+
+1. The non-redundant BLAST database has $6 \ast 10^7$ nucleotide sequences. Suppose you BLAST your sequence and get a sequence hit with a p-value of $10^{-10}$. You have performed $6 \ast 10^7$ sequence comparisons, what is the probability that at least one of the observations will be called significant by chance?
+
+- **We can represent generally the chance of at least one event ocurring in terms of its complement. Using the given p-value and the number of comparisons (events), we can then derive this probability and find its numerical value:**
+  
+  \begin{align}
+  P(\ge \textrm{1 event significant by chance}) &= 1 - P(\textrm{no events significant by chance}) \\
+  &= 1 - (1 - 10^{-10})^{6 \ast 10^7} \\
+  &= {\sim}0.006
+  \end{align}
+
+2. Instead of using p-values, BLAST reports E-values. What is it, and what is your estimate of the E-value based on part 1?
+
+- **An E-value, or Expect value, describes the expected number of hits that will occur by chance when searching a database of a particular size. The lower the E-value for a match, the more significant that match is. We estimate the number of hits that occur by chance by multiplying the given p-value by the number of comparisons:**
+  
+  \begin{align}
+  \textrm{E-value} &= 10^{-10} \ast 6 \ast 10^7 \\
+  &= 0.006
+  \end{align}
+
+## Primers for COVID screening by RT-PCR
+
+### Background on PCR
+
+```
+ ________  ________  ________  ___  ________   ________     
+|\   __  \|\   __  \|\   __  \|\  \|\   ___  \|\   ____\    
+\ \  \|\ /\ \  \|\  \ \  \|\  \ \  \ \  \\ \  \ \  \___|    
+ \ \   __  \ \  \\\  \ \   _  _\ \  \ \  \\ \  \ \  \  ___  
+  \ \  \|\  \ \  \\\  \ \  \\  \\ \  \ \  \\ \  \ \  \|\  \ 
+   \ \_______\ \_______\ \__\\ _\\ \__\ \__\\ \__\ \_______\
+    \|_______|\|_______|\|__|\|__|\|__|\|__| \|__|\|_______|
+                                                            
+
+ ________  ________  ________   _________  _______      ___    ___ _________               
+|\   ____\|\   __  \|\   ___  \|\___   ___\\  ___ \    |\  \  /  /|\___   ___\             
+\ \  \___|\ \  \|\  \ \  \\ \  \|___ \  \_\ \   __/|   \ \  \/  / ||___ \  \_|             
+ \ \  \    \ \  \\\  \ \  \\ \  \   \ \  \ \ \  \_|/__  \ \    / /     \ \  \              
+  \ \  \____\ \  \\\  \ \  \\ \  \   \ \  \ \ \  \_|\ \  /     \/       \ \  \ ___ ___ ___ 
+   \ \_______\ \_______\ \__\\ \__\   \ \__\ \ \_______\/  /\   \        \ \__\\__\\__\\__\
+    \|_______|\|_______|\|__| \|__|    \|__|  \|_______/__/ /\ __\        \|__\|__\|__\|__|
+                                                       |__|/ \|__|                         
+```
+
+### Question on primer design
+
+1. Which SARS-CoV-2 gene is amplified by this primer pair?
+
+- **The gene N is amplified.**
+
+2. Are these primers specific to SARS-CoV-2, or do they amplify human mRNA sequences?
+
+- **These primers are specific to SARS-CoV-2.**
+
+3. Consider shortening each of these primers to include only the first 18 nucleotides. Find the human transcripts that could be amplified by this PCR reaction. What are their lengths? The PCR reaction offers some control over the maximum product length. Is there a product length cutoff that allows you to exclude human transcripts?
+
+- **The human transcripts QRICH2 (variants 3, 1, X3, X2, X4; product length 383), CKAP5 (variants 2, 1; product length 2774), and NKD1 (variant 1; product length 2777) are amplified by this PCR reaction. There is no product length cutoff that excludes human transcripts.**
+
+\newpage
+
+# P-values in a Simulated ChIP-seq Gene
+
+1. Simulate random Poisson counts. Draw random counts assuming they follow the Poisson distribution with parameter $\lambda$ as above. Draw $n = 4$ replicates for each condition. Report a table with the counts you obtained on one random trial.
+
+```{r}
+counts_c1 <- rpois(n = 4, lambda = 10)
+counts_c2 <- rpois(n = 4, lambda = 50)
+knitr::kable(cbind(counts_c1, counts_c2) %>% `colnames<-` (c("$\\lambda_1$", "$\\lambda_2$")), caption = "Random counts from one trial")
+```
+
+2. Compute and report the sample mean $\bar{c}_i$ and sample variance $\sigma_{i}^{2}$ in each condition $i$.
+
+```{r}
+mean_c1 <- mean(counts_c1)
+mean_c2 <- mean(counts_c2)
+var_c1 <- var(counts_c1)
+var_c2 <- var(counts_c2)
+```
+
+- **For condition 1, $\bar{c}_1 = `r mean_c1`$ and $\sigma_{1}^{2} = `r var_c1`$. For condition 2, $\bar{c}_2 = `r mean_c2`$ and $\sigma_{2}^{2} = `r var_c2`$.**
+
+3. Calculate and report the following t-statistic: $t = \frac{\bar{c}_1 - \bar{c}_2}{\sqrt{\sigma_{1}^{2} + \sigma_{2}^{2}}} \sqrt{n}$
+
+```{r}
+t <- ((mean_c1 - mean_c2) / (sqrt(var_c1 + var_c2))) * sqrt(4)
+```
+
+- **$t = `r t`$**
+
+4. Calculate and report the two-tailed p-value of differential protein-DNA interaction using $t$.
+
+```{r}
+pval <- 2 * pt(q = abs(t), df = (2 * (4 - 1)), lower.tail = FALSE)
+```
+
+- **The two-tailed p-value is `r pval`. The size of the p-value is very small, meaning we are correctly rejecting the null hypothesis (which would say that both conditions are the same).**
+
+5. Repeat steps 1-4 with $\lambda_1 = \lambda_2 = 10$. Report the t-statistic and p-value you got. What does the size of your p-value indicate?
+
+```{r}
+# Simulate poisson counts
+counts_same1 <- rpois(n = 4, lambda = 10)
+counts_same2 <- rpois(n = 4, lambda = 10)
+# Compute sample mean and variance
+mean_same1 <- mean(counts_same1)
+var_same1 <- var(counts_same1)
+mean_same2 <- mean(counts_same2)
+var_same2 <- var(counts_same2)
+# Calculate t-statistic
+t_same <- ((mean_same1 - mean_same2) / (sqrt(var_same1 + var_same2))) * sqrt(4)
+# Calculate two-tailed p-value
+pval_same <- 2 * pt(q = abs(t_same), df = (2 * (4 - 1)), lower.tail = FALSE)
+```
+
+- **The value of the t-statistic is `r t_same` and the two-tailed p-value is `r pval_same`. The size of the p-value is very large, indicating that we are correctly rejecting the alternative hypothesis (which would say that the two conditions are different).**
+
+6. What is the two-tailed p-value of a t-statistic of 3.5 (with the same degrees of freedom as earlier)?
+
+```{r}
+pval_final <- 2 * pt(q = abs(3.5), df = (2 * (4 - 1)), lower.tail = FALSE)
+```
+
+- **The two-tailed p-value is `r pval_final`.**
+
+\newpage
+
+# GO term enrichment
+
+```{r}
+# Import datasets
+ORFs = read.table("./hw3data/q4/all_yeast_orfs.txt", stringsAsFactors = FALSE, col.names = "ORF")$ORF
+DE_ORFs = read.table("./hw3data/q4/differentially_expressed_orfs.txt", stringsAsFactors = FALSE, col.names = "ORF")$ORF
+GO_Annotation = read.table("./hw3data/q4/go_bp_matrix.txt",stringsAsFactors = FALSE,header=TRUE, check.names = FALSE,row.names=1)
+GO_Terms = read.table("./hw3data/q4/go_bp_to_annotation.txt",stringsAsFactors = FALSE, sep = "\t", check.names=FALSE,quote="",col.names=c("GOterm","Description"))
+```
+
+## Data Validation
+
+(a) Are all genes in your differentially expressed list included in the list of tested genes? If not, which genes are missing from the tested genes? Why do you think they are missing? If possible, fix the differentially expressed list. Otherwise, eliminate these genes from the differentially expressed list.
+
+```{r}
+# Check if differentially experessed list is subset of tested genes list
+is_subset <- all(DE_ORFs %in% ORFs)
+
+# Find which genes are missing from the tested genes
+if (!is_subset) {
+  # NOTE: The missing genes are actually in ORFs but are mispelled (listed with an "O" instead of a "0"), meaning that ORFs would have duplicate genes if the mispellings were corrected and reinserted into the list
+  missing_genes <- setdiff(DE_ORFs, ORFs)
+  
+  # Eliminate duplicates and missing genes from the differentially expressed list
+  Corrected_DE_ORFs <- unique(DE_ORFs[! DE_ORFs %in% missing_genes])
+}
+```
+
+- **There are missing genes, specifically the genes `r missing_genes`. The missing genes appear to be mispellings of existing genes in ORFs, so there might have been an error in preparing or cleaning the data after the experiment.**
+
+(b) Calculate the size of each GO term, i.e. the number of genes annotated to it. Plot the distribution of GO term sizes. What is the largest GO term? Report the GO term id, name and size.
+
+```{r}
+# Find number of genes annotated to each GO term
+GO_Terms$Size <- apply(GO_Annotation, 2, count <- function(x) {sum(x)})
+
+# Plot distribution of GO term sizes
+hist(GO_Terms$Size, 
+     main="Histogram of GO term sizes", 
+     xlab = "Term size")
+
+# Find the largest GO term
+index <- which.max(GO_Terms$Size)
+max_GO_term <- GO_Terms[index,]
+knitr::kable(cbind(index, max_GO_term$GOterm, max_GO_term$Size) %>% `colnames<-` (c("id", "name", "size")), caption = "Max GO term")
+```
+
+(c) Calculate the number of GO terms for gene YDR026C. Is GO:0006725 “cellular aromatic compound metabolic process” among the terms?
+
+```{r}
+# Subset corresponding row by nonzero elements
+gene_GO_terms <- GO_Annotation[which(rownames(GO_Annotation) == "YDR026C"),] %>% select_if(colSums(.) != 0)
+
+gene_GO_terms_size <- length(gene_GO_terms)
+is_among <- "GO:0006725" %in% colnames(gene_GO_terms)
+```
+
+- **There are `r gene_GO_terms_size` GO terms for gene YDR026C. GO:0006725 `r if(is_among) "is" else "is not"` among the terms.**
+
+## Enrichment analysis
+
+Use the hypergeometric test to calculate the enrichment of each GO term among the list of differentially expressed genes from your experiment.
+
+```{r, warning=FALSE}
+# Optimization
+rnames <- rownames(GO_Annotation)
+
+# Number of genes in background
+N <- length(ORFs)
+
+# Number of differentially-expressed genes
+n <- length(Corrected_DE_ORFs)
+
+GO_Terms$K <- GO_Terms$Size
+for (i in 1:nrow(GO_Terms)) {
+  # Number of differentially-expressed genes with GO term
+  GO_Terms$k[i] <- length(intersect(Corrected_DE_ORFs, rnames[which(GO_Annotation[, i] > 0)]))
+  # Calculate p-values
+  GO_Terms$PValue[i] <- phyper(GO_Terms$k[[i]]-1, GO_Terms$K[i], N-GO_Terms$K[i], n, lower.tail=FALSE)
+  # Calculate fold enrichments
+  GO_Terms$FoldEnrichment[i] <- (GO_Terms$k[[i]] / n) / (GO_Terms$K[i] / N)
+}
+
+# Correct p-values
+GO_Terms$Corrected_PValue <- p.adjust(GO_Terms$PValue, method = "bonferroni")
+
+# Print out ranked list of all significant GO terms
+GO_Terms$id <- rownames(GO_Terms)
+significant_terms <- GO_Terms %>% filter(Corrected_PValue < 0.05) %>% arrange(Corrected_PValue)
+knitr::kable(cbind(significant_terms$id, significant_terms$GOterm, significant_terms$K, significant_terms$k, format(significant_terms$FoldEnrichment, digits = 4), format(significant_terms$PValue, digits = 4), format(significant_terms$Corrected_PValue, digits = 4)  ) %>% `colnames<-` (c("id", "name", "# background", "# DE", "enrichment", "p-value", "corrected p-value")), caption = "Significant GO terms by corrected p-value")
+```
+
+## Theoretical question
+
+Imagine that at some point, you realized that the method used to quantify gene expression was restricted to only non-essential genes in the yeast genome. Explain how this could affect your previous analysis and the obtained p-values.
+
+- **If the method used to quantify gene expression was limited to non-essential genes, it would mean that the list of differentially expressed genes was likewise limited. Since non-essential genes were incorrectly over-represented in the analysis, the obtained p-values are far lower than they should be. In other words, the ranked list could contain genes that in reality are far less significant.**
+
+\newpage
+
+```{r}
+sessionInfo(package = NULL)
+```

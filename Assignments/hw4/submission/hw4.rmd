@@ -1,0 +1,275 @@
+---
+title: "QCB455/COS551 Homework 4"
+subtitle: "Sequence Alignment, Sequence Profiles, Machine Learning, Network Analysis, and Proteomics"
+author: "William Svoboda (`wsvoboda`)"
+date: "Last edited `r format(Sys.time(), '%B %d, %Y')`"
+toc: true
+fontfamily: charter
+output: 
+  pdf_document:
+    number_sections: true
+urlcolor: blue
+linkcolor: blue
+header-includes: |
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+  \usepackage{amsmath}
+  \usepackage{amssymb}
+  \usepackage{tikz}
+  \usetikzlibrary{cd}
+---
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Required packages
+library(dplyr, quietly = TRUE)
+library(knitr, quietly = TRUE)
+library(formatR, quietly = TRUE)
+library(caret)
+library(tidygraph)
+library(tidyverse)
+library(igraph)
+library(ggraph)
+
+# Wrap R code in final document
+opts_chunk$set(tidy.opts = list(width.cutoff = 80), tidy = TRUE)
+```
+
+# Collaboration Statement {-}
+
+I talked with Brendan McManamon (`bm18`, student) and Sara Schwartz (`sarats`, student) about this homework.
+
+\newpage
+
+# Semi-global Sequence Alignment
+
+1. How would you modify the dynamic programming algorithm we discussed in class?
+
+- **To not penalize gaps at the beginning of S, the first column in the matrix is initialized to zero. To not penalize gaps at the end of T, traceback begins from the last column at the maximum score.**
+
+2. Using the modified algorithm from above, complete the alignment matrix for sequences S and T.
+
+  \begin{figure}
+  \centering
+  \begin{tikzcd}[cramped, sep=small]
+  & & \textbf{G} & \textbf{C} & \textbf{A} & \textbf{A} & \textbf{G} & \textbf{T} \\
+  & 0 & -2 & -4 & -6 & -8 & -10 & -12 \\
+  \textbf{A} & 0 & -1 & -3 & -2 & -4 & -6 & -8 \\
+  \textbf{T} & 0 & -1 & -2 & -4 & -3 & -5 & -4 \\
+  \textbf{G} & 0 & 2 & 0 & -2 & -4 & -1 & -3 \\
+  \textbf{C} & 0 & 0 & 4 & 2 & 0 & -2 & -2 \\
+  \textbf{T} & 0 & -1 & 2 & 3 & 1 & -1 & 0 \\
+  \textbf{G} & 0 & 2 & 0 & 1 & 2 & 3 & 1
+  \end{tikzcd}
+  \caption{Alignment matrix of sequences}
+  \end{figure}
+
+3. Perform traceback on the alignment matrix from above, and report the final alignment of S and T and their alignment score.
+
+  \begin{figure}
+  \centering
+  \begin{tikzcd}[cramped, sep=small, arrows={color=green, line width=1pt}]
+  & & \textbf{G} & \textbf{C} & \textbf{A} & \textbf{A} & \textbf{G} & \textbf{T} \\
+  & 0 & -2 & -4 & -6 & -8 & -10 & -12 \\
+  \textbf{A} & 0\arrow[u] & -1 & -3 & -2 & -4 & -6 & -8 \\
+  \textbf{T} & 0\arrow[u] & -1 & -2 & -4 & -3 & -5 & -4 \\
+  \textbf{G} & 0 & 2\arrow[ul] & 0 & -2 & -4 & -1 & -3 \\
+  \textbf{C} & 0 & 0 & 4\arrow[ul] & 2\arrow[l] & 0 & -2 & -2 \\
+  \textbf{T} & 0 & -1 & 2 & 3\arrow[ul] & 1\arrow[l]\arrow[ul] & -1 & 0 \\
+  \textbf{G} & 0 & 2 & 0 & 1 & 2 & 3\arrow[ul] & 1\arrow[l]
+  \end{tikzcd}
+  \caption{Traceback of alignment matrix}
+  \end{figure}
+
+  \begin{figure}
+  \centering
+  s: \texttt{\_\_GCAAGT}\\
+  t: \texttt{ATGCT\_G\_}\\
+  \vspace{1em}
+  s: \texttt{\_\_GCAAGT}\\
+  t: \texttt{ATGC\_TG\_}
+  \caption{Final alignments of S and T}
+  \end{figure}
+
+\newpage
+
+# Sequence Profiles
+
+1. For your model, compute estimates for the probability of observing each of the 20 amino acids for the 5th column. Make sure to correct each estimate by adding a pseudocount $(\frac{1}{20})$ to each observation. Why is this correction necessary?
+
+- **From looking at the fifth column, we know that $b_{m1N} = \frac{3}{5}$ and $b_{m1Q} = \frac{1}{5}$. We then correct each estimate by adding the pseudocount $(\frac{1}{20})$ such that $b_{m1N} = \frac{3 + 1}{5 + 20} = \frac{4}{25}$ and $b_{m1Q} = \frac{1 + 1}{5 + 20} = \frac{2}{25}$ with all else equal to $\frac{1}{25}$.**
+
+2. For your model, you will need to estimate the probability of having insertions and deletions after each modeled column. Give an estimate for having an insertion, deletion or neither after the 1st column. Make sure to to correct each estimate by adding a pseudocount $(\frac{1}{3})$ to each.
+
+- **I don't know.**
+
+3. You notice that the 3rd and 7th columns of the alignment are correlated. Whenever there is a positively charged amino acid (K or R) in one, there is a negatively charged amino acid (D or E) in the other. Do HMM-profiles effectively capture these correlations? Why or why not?
+
+- **I don't know.**
+
+4. What is the advantage of profile-HMMs over regular profiles/PSSMs?
+
+- **Unlike PSSMs, profile-HMMs allow for position-specific gaps.**
+
+\newpage
+
+# Machine Learning to Classify Cancer Type
+
+1. Import the two data files **training.csv** and **testing.csv** as data frames into your working environment. After importing your data, use the as.factor() function to change the **Classification** column in both data frames to a factor. How many breast cancer negative controls are in the training set?
+
+```{r}
+# Import data files
+training <- read.csv("./hw4data/training.csv", header = TRUE)
+testing <- read.csv("./hw4data/testing.csv", header = TRUE)
+
+# Change the Classification column in each data frame to a factor
+training$Classification <- as.factor(training$Classification)
+testing$Classification <- as.factor(testing$Classification)
+
+# Find number of breast cancer negative controls in training set
+num_negative_controls <- training %>% filter(Classification == 1) %>% nrow()
+```
+
+- **There are `r num_negative_controls` breast cancer negative controls in the training set.**
+
+2. Train a classifier on the training data to distinguish breast cancer presence using the Support Vector Machine (SVM) method as discussed in lecture.
+
+```{r}
+model <- train(training[,1:ncol(training) - 1], training$Classification, method = "svmLinear", preProcess = c("center", "scale"))
+```
+
+3. Now, test your trained classifier on the testing dataset by predicting the hidden cancer status of the testing data. Generate a confusion matrix and summary statistics (accuracy, precision, and recall) for your classifier. Print out your confusion matrix.
+
+```{r}
+# Generate predictions using trained model and testing data
+predictions <- predict(model, newdata = testing[,1:ncol(testing) - 1])
+
+# Generate confusion matrix
+confusionMatrix(predictions, testing$Classification)
+```
+
+4. Do you believe the classifier you trained is a good predictor of breast cancer status? Explain why or why not, citing the summary statistics from the previous problem. Does this conflict with the author’s assessment? Name at least one difference between our analysis and the authors’ analysis.
+
+- **I believe the classifier is a good predictor of breast cancer status. Generating the summary statistics reveals that the classifier has an accuracy of about 74.3%. Additionally, the P-Value is very low at 0.0123 which greatly favors the alternative hypothesis. This corresponds with the author's assesment that the technique holds promise, as they found the sensitivity to be between 82-88% and the specificity to be between 85-90% (which is higher than my analysis at 75% and 73.7% respectively). One difference between our analyses is that the original paper used fewer features when creating their SVM.**
+
+5. The authors use a process called cross-validation to build 95% confidence intervals for their summary statistics. Briefly describe what cross-validation is and why it is important in machine learning.
+
+- **Cross-validation is a process where resampling takes place in order to evaluate if a machine learning model is over or under-fitting the data. This is important because it means a limited dataset will not unknowingly bias the model as a result of noise.**
+
+6. In a few sentences, explain why neural networks might or might not be a good choice for the dataset and learning task we chose for this problem.
+
+- **One of the biggest disadvantages of neural networks is that they are often a ``black-box". In other words, it is often unclear how a neural network arrived at a given output. For this dataset and learning task, interpretability is very important. Neural networks, therefore, might not be a good choice because the input features that would cause a positive classification would not necessarily be clear. Given that we ultimately want to screen for breast cancer given certain metabolic markers, this would not be ideal.**
+
+\newpage
+
+# Network Analysis
+
+1. Use \url{www.thebiogrid.org} to download the protein-protein interaction network for Stukalov, 2020 "Multilevel proteomics reveals host-perturbation strategies of SARS-CoV-2 and SARS-CoV".
+
+```{r, warning = FALSE, message = FALSE}
+biogrid <- read_tsv("./hw4data/BIOGRID-PUBLICATION-222410-4.4.204.DOWNLOADS.zip") %>%
+  filter(`Experimental System` == "Affinity Capture-MS") %>%
+  select(
+    node_1=`Official Symbol Interactor A`,
+    node_2 =`Official Symbol Interactor B`,
+    spec_1 = `Organism Name Interactor A`,
+    spec_2 =`Organism Name Interactor B`) %>%
+  filter(spec_1 != "Severe acute respiratory syndrome-related coronavirus"
+         & spec_2 != "Severe acute respiratory syndrome-related coronavirus") %>%
+  filter(node_1 != node_2) # Remove self edges
+edges <- biogrid %>% select(node_1, node_2)
+g <- as_tbl_graph(edges, directed = TRUE)
+```
+
+2. Briefly describe the experimental approach in this paper to create the interaction network.
+
+- **In order to create the interaction network, the authors profiled the interactions between coronaviruses and human cells. Unlike previous studies, however, both SARS-CoV-2 and the closely related SARS-CoV were profiled. This allowed for previously hidden interactions to be identified using the additional data from the latter virus.**
+
+3. How many nodes and edges are present in the graph?
+
+- **There are `r gorder(g)` nodes and `r gsize(g)` edges in the graph.**
+
+4. Plot the degree distribution of the coronavirus proteins. Which two proteins have the highest degree? What, if anything, is known about role of each of these two proteins during infection?
+
+```{r}
+# Coronavirus proteins have a nonzero out degree
+g <- g %>% activate(nodes) %>% mutate(out_degree = centrality_degree(mode = "out"))
+coronavirus_proteins <- g %>% filter(out_degree > 0) %>% data.frame()
+hist(coronavirus_proteins$out_degree, main = "Degree distribution", xlab = "Degree")
+
+# Find two proteins with highest degree
+highest_degrees <- coronavirus_proteins %>% arrange(desc(out_degree)) %>% head(2) %>% pull(name)
+```
+- **The two proteins with the highest degree are `r highest_degrees[1]` and `r highest_degrees[2]`. Currently, neither protein is known to be essential for viral replication.**
+
+5. Which human proteins are found with more than two different SARS-COV-2 proteins?
+
+```{r}
+# Find number of incoming edges for each node
+g <- g %>% activate(nodes) %>% mutate(in_degree = centrality_degree(mode = "in"))
+
+# Filter for nodes with more than 2 incoming edges
+human_proteins <- g %>% filter(in_degree > 2) %>% data.frame()
+knitr::kable(cbind(human_proteins$name, human_proteins$in_degree) %>% `colnames<-` (c("name", "degree")) ,caption = "Human proteins with $> 2$ different SARS-COV-2 proteins")
+```
+
+6. Create a network visualization of this network, sizing nodes by their degree, and coloring by species.
+
+```{r}
+layout <- create_layout(g, layout = "igraph", algorithm = "nicely")
+ggraph(layout) +
+  geom_edge_link() + 
+  geom_node_point(aes(size = out_degree, color = ifelse(out_degree == 0, "Human", "Coronavirus"))) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), 
+        legend.title = element_text(face = "bold"),
+        legend.key = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.border = element_blank(), 
+        panel.background = element_blank()) + 
+  ggtitle("Network visualization") + 
+  labs(color = "Species", size = "Degree")
+```
+
+7. What is one way you could use this interaction network to learn about the biology of SARS-COVID-2 infection in humans?
+
+- **The interaction network reveals that a relatively small number of SARS-COV-2 proteins are responsible for the majority of interactions with human proteins. This might give insight into what parts of the virus actually drive the infection process.**
+
+\newpage
+
+# Proteomics
+
+1. Determine the amino acid sequence of the following spectrum using the provided monoisotopic mass table on the next page. The spectrum contains the full series of B and Y ions and a partial series of A and Z ions.
+
+- **If the total mass of the peptide 1105.55 amu and the range of amino acid masses are 57-186 amu, we can estimate the length of the peptide:**
+
+  \begin{equation}
+  \begin{split}
+  &= \frac{1105.55}{\frac{57 + 186}{2}}\\
+  &= \frac{1105.55}{121.5}\\
+  & \approx 9
+  \end{split}
+  \end{equation}
+  
+  **The amino acid sequence is `(I/L)WSVCDQR`.**
+
+2. Describe briefly how you figured out the sequence.
+
+- **Starting from the left side of the spectrum, I sequentially subtracted residue masses until reaching the other end. Each time, I compared the difference with the provided monoisotopic mass table to determine if there was a match. If there wasn't, I calculated the difference using the next reading to the right.**
+
+3. How would a Post-Translation Modification of a peptide be identified from a mass spectrum?
+
+- **Because a Post-Translation Modification affects the molecular weight of the peptide, this would be picked up from a mass spectrum which by definition is sensitive to the sample mass.**
+
+\newpage
+
+# Project Update
+
+1. Submit a separate R file containing all new code that has been written by you (as an individual) for your final project since the project update that was due November 19th.
+
+- **Please see the attached files `svoboda.pdf` and `svoboda.rmd`.**
+
+\newpage
+
+```{r}
+sessionInfo(package = NULL)
+```
