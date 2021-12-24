@@ -310,7 +310,7 @@ The plot of the genome-wide SARS-CoV-2 mutation distribution (\autoref{fig:fig2}
 
 This paper uses the summary data from the [Mutation Tracker](https://users.math.msu.edu/users/weig/SARS-CoV-2_Mutation_Tracker.html) website up to 31 October 2021. This data was originally sourced from GISAID ([https://www.gisaid.org/](https://www.gisaid.org/)).
 
-All code for this paper is attached in the appendix, and will be uploaded to the authors' GitHub pending approval.
+All code for this paper is attached in the appendix and is also available on the author's (W.S.) GitHub at [https://github.com/thisstillwill/QCB455-Fall-2021](https://github.com/thisstillwill/QCB455-Fall-2021).
 
 ## Acknowledgements {-}
 
