@@ -1,6 +1,6 @@
 # QCB 455 Fall 2021
 
-This repository contains my assignment submissions for QCB455/MOL455/COS551 Introduction to Genomics and Computational Molecular Biology.
+This repository contains my assignment submissions for QCB 455/MOL 455/COS 551 Introduction to Genomics and Computational Molecular Biology.
 
 ## Contents
 
